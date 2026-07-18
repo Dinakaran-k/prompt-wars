@@ -13,15 +13,21 @@ const app = express();
 
 app.use(helmet());
 
-// CORS only matters for local dev, where the Vite client (localhost:5174)
-// and this server (localhost:5002) are different origins. In production
-// this is a single combined service — the client is served from this same
-// origin — so there's no cross-origin caller to restrict, and sessions are
-// identified by an X-Session-Id header (not a cookie), so there's no
-// CSRF/credential-leak risk from allowing any origin here. Scoped to /api
-// only so it never touches static asset or page requests.
+// Sessions are identified by an X-Session-Id header, which functions like a
+// bearer token (unlike a cookie, it has no SameSite/HttpOnly protection) —
+// a permissive CORS policy would let any origin that obtains a leaked
+// session ID (shared URL, referrer, etc.) read that session's data
+// cross-origin. Keep a real origin allowlist. Scoped to /api only (one
+// mount below, not per-route) so it can never touch static asset or page
+// requests — that was the actual cause of the earlier production outage,
+// not the existence of an allowlist.
 const corsOptions = {
-  origin: true,
+  origin: function (origin, callback) {
+    if (!origin) return callback(null, true); // same-origin / non-browser requests send no Origin header
+    if (process.env.CORS_ORIGIN && origin === process.env.CORS_ORIGIN) return callback(null, true);
+    if (process.env.NODE_ENV !== 'production' && origin.startsWith('http://localhost')) return callback(null, true);
+    return callback(new Error('Not allowed by CORS'));
+  },
   credentials: false,
   methods: ['GET', 'POST', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'X-Session-Id']
@@ -29,9 +35,10 @@ const corsOptions = {
 
 app.use(express.json({ limit: '10kb' }));
 
-app.use('/api/goal', cors(corsOptions), requireSession, goalRouter);
-app.use('/api/checkins', cors(corsOptions), requireSession, checkinsRouter);
-app.use('/api/stats', cors(corsOptions), requireSession, statsRouter);
+app.use('/api', cors(corsOptions));
+app.use('/api/goal', requireSession, goalRouter);
+app.use('/api/checkins', requireSession, checkinsRouter);
+app.use('/api/stats', requireSession, statsRouter);
 
 app.get('/health', (req, res) => {
   res.status(200).json({ status: 'OK', timestamp: new Date().toISOString() });

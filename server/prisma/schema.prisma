@@ -27,7 +27,6 @@ model CheckIn {
   coaching          CoachingResponse?
 
   @@unique([sessionId, date])
-  @@index([sessionId, date])
 }
 
 model CoachingResponse {

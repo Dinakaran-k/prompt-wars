@@ -1,14 +1,16 @@
 const { todayString, addDays } = require('./dateUtils');
 
-function computeStreak(checkInsByDate) {
-  let streak = 0;
-  let cursor = todayString();
+function computeStreak(checkInDates) {
+  const today = todayString();
+  let cursor = checkInDates.has(today) ? today : addDays(today, -1);
 
-  while (checkInsByDate.has(cursor)) {
+  if (!checkInDates.has(cursor)) return 0;
+
+  let streak = 0;
+  while (checkInDates.has(cursor)) {
     streak += 1;
     cursor = addDays(cursor, -1);
   }
-
   return streak;
 }
 
@@ -19,7 +21,7 @@ function average(values) {
 }
 
 function computeStats(checkIns, dailyTargetMinutes) {
-  const checkInsByDate = new Map(checkIns.map((c) => [c.date, c]));
+  const checkInDates = new Set(checkIns.map((c) => c.date));
   const today = todayString();
 
   const last7Start = addDays(today, -6);
@@ -41,13 +43,13 @@ function computeStats(checkIns, dailyTargetMinutes) {
     else trend = 'STEADY';
   }
 
-  const daysUnderTargetLast7 = dailyTargetMinutes
+  const daysUnderTargetLast7 = dailyTargetMinutes != null
     ? last7.filter((c) => c.screenTimeMinutes <= dailyTargetMinutes).length
     : null;
 
   return {
     totalCheckIns: checkIns.length,
-    currentStreakDays: computeStreak(checkInsByDate),
+    currentStreakDays: computeStreak(checkInDates),
     avgMinutesLast7Days,
     avgMinutesPrev7Days,
     trend,

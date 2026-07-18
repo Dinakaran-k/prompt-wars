@@ -8,11 +8,16 @@ function formatCoaching(coaching) {
   if (coaching.status === 'UNAVAILABLE') {
     return { status: 'UNAVAILABLE' };
   }
-  return {
-    status: 'SUCCESS',
-    dailyMessage: coaching.dailyMessage,
-    nudgePlan: JSON.parse(coaching.nudgePlan)
-  };
+  try {
+    return {
+      status: 'SUCCESS',
+      dailyMessage: coaching.dailyMessage,
+      nudgePlan: JSON.parse(coaching.nudgePlan)
+    };
+  } catch (err) {
+    console.error('Failed to parse stored nudgePlan JSON:', err);
+    return { status: 'UNAVAILABLE' };
+  }
 }
 
 async function createCheckIn(req, res, next) {
@@ -22,18 +27,18 @@ async function createCheckIn(req, res, next) {
       return res.status(400).json({ errors });
     }
 
-    const goal = await prisma.goal.findUnique({ where: { sessionId: req.sessionId } });
+    const today = todayString();
+    const [goal, recentCheckIns] = await Promise.all([
+      prisma.goal.findUnique({ where: { sessionId: req.sessionId } }),
+      prisma.checkIn.findMany({
+        where: { sessionId: req.sessionId, date: { not: today } },
+        orderBy: { date: 'desc' },
+        take: 7
+      })
+    ]);
     if (!goal) {
       return res.status(404).json({ error: 'Set a goal before checking in' });
     }
-
-    const today = todayString();
-
-    const recentCheckIns = await prisma.checkIn.findMany({
-      where: { sessionId: req.sessionId, date: { not: today } },
-      orderBy: { date: 'desc' },
-      take: 7
-    });
 
     const checkIn = await prisma.checkIn.upsert({
       where: { sessionId_date: { sessionId: req.sessionId, date: today } },
@@ -66,14 +71,20 @@ async function createCheckIn(req, res, next) {
       coachingResult = null;
     }
 
+    const coachingData = coachingResult
+      ? { status: 'SUCCESS', dailyMessage: coachingResult.dailyMessage, nudgePlan: JSON.stringify(coachingResult.nudgePlan) }
+      : { status: 'UNAVAILABLE', dailyMessage: null, nudgePlan: null };
+
+    // Intentionally NOT wrapped in a transaction with the checkIn upsert: the Gemini call
+    // (generateCoaching, above) sits between the two writes and can take up to ~30s with
+    // retries, so holding a DB transaction open across it risks exhausting the connection
+    // pool. If this upsert fails after the checkIn was already saved, the error propagates
+    // to the try/catch below and the client gets a 500 — the check-in row persists without
+    // coaching (a degraded but recoverable state), and the failure is surfaced, not swallowed.
     const coaching = await prisma.coachingResponse.upsert({
       where: { checkInId: checkIn.id },
-      update: coachingResult
-        ? { status: 'SUCCESS', dailyMessage: coachingResult.dailyMessage, nudgePlan: JSON.stringify(coachingResult.nudgePlan) }
-        : { status: 'UNAVAILABLE', dailyMessage: null, nudgePlan: null },
-      create: coachingResult
-        ? { checkInId: checkIn.id, status: 'SUCCESS', dailyMessage: coachingResult.dailyMessage, nudgePlan: JSON.stringify(coachingResult.nudgePlan) }
-        : { checkInId: checkIn.id, status: 'UNAVAILABLE' }
+      update: coachingData,
+      create: { checkInId: checkIn.id, ...coachingData }
     });
 
     return res.status(201).json({
@@ -87,7 +98,8 @@ async function createCheckIn(req, res, next) {
 
 async function listCheckIns(req, res, next) {
   try {
-    const limit = Math.min(parseInt(req.query.limit, 10) || 14, 50);
+    const parsedLimit = parseInt(req.query.limit, 10);
+    const limit = Math.min(Number.isInteger(parsedLimit) && parsedLimit > 0 ? parsedLimit : 14, 50);
     const cursor = req.query.cursor;
 
     const where = {
