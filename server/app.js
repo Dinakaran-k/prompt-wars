@@ -11,6 +11,7 @@ const statsRouter = require('./routes/stats');
 
 const app = express();
 
+app.set('trust proxy', 1);
 app.use(helmet());
 
 // Sessions are identified by an X-Session-Id header, which functions like a
@@ -24,22 +25,42 @@ app.use(helmet());
 //
 // This is a single combined deploy (Express serves the built client itself),
 // so the only legitimate origin is whatever host this request actually
-// arrived on. Prefer an explicit CORS_ORIGIN env var if set, but don't
-// require it — falling back to the request's own Host header means the
-// app's own same-origin calls always work even if that env var was never
-// configured on the hosting platform, while a genuinely different origin
-// still gets rejected. NODE_ENV=production hardcodes https instead of
-// trusting req.protocol, since that reflects the connection to Render's
-// proxy, not the public https:// origin browsers actually send.
+// arrived on. We use a robust host-comparison logic to allow requests
+// matching the server's own host or an explicit CORS_ORIGIN setting,
+// resolving CORS blocks that can occur due to reverse proxy protocol
+// differences (HTTP vs HTTPS).
 function corsOptionsDelegate(req, callback) {
   const origin = req.headers.origin;
-  const selfOrigin = `${process.env.NODE_ENV === 'production' ? 'https' : req.protocol}://${req.get('host')}`;
-  const allowedOrigin = process.env.CORS_ORIGIN || selfOrigin;
 
-  const isAllowed =
-    !origin || // same-origin / non-browser requests send no Origin header
-    origin === allowedOrigin ||
-    (process.env.NODE_ENV !== 'production' && origin.startsWith('http://localhost'));
+  let isAllowed = false;
+  if (!origin) {
+    // Same-origin or non-browser requests (which don't send Origin header) are allowed
+    isAllowed = true;
+  } else {
+    try {
+      const originUrl = new URL(origin);
+      const hostHeader = req.get('host'); // e.g. "unplug-etso.onrender.com" or "localhost:5002"
+      const originHost = originUrl.host; // e.g. "unplug-etso.onrender.com" or "localhost:5174"
+
+      // 1. Same-host requests are always allowed (ignoring protocol for proxy setups)
+      if (originHost === hostHeader) {
+        isAllowed = true;
+      }
+      // 2. Explicit CORS_ORIGIN check (matching host component and ignoring trailing slashes/protocols)
+      else if (process.env.CORS_ORIGIN) {
+        const allowedClean = process.env.CORS_ORIGIN.replace(/^https?:\/\//, '').replace(/\/$/, '');
+        if (originHost === allowedClean) {
+          isAllowed = true;
+        }
+      }
+      // 3. Localhost development fallback
+      else if (origin.startsWith('http://localhost') || origin.startsWith('http://127.0.0.1')) {
+        isAllowed = true;
+      }
+    } catch (e) {
+      isAllowed = false;
+    }
+  }
 
   if (!isAllowed) {
     return callback(new Error('Not allowed by CORS'));
