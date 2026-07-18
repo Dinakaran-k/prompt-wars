@@ -1,0 +1,41 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model Goal {
+  id                 String   @id @default(cuid())
+  sessionId          String   @unique
+  habitLabel         String
+  dailyTargetMinutes Int?
+  createdAt          DateTime @default(now())
+}
+
+model CheckIn {
+  id                String            @id @default(cuid())
+  sessionId         String
+  date              String
+  screenTimeMinutes Int
+  triggerNote       String?
+  moodContext       String?
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+  coaching          CoachingResponse?
+
+  @@unique([sessionId, date])
+  @@index([sessionId, date])
+}
+
+model CoachingResponse {
+  id            String   @id @default(cuid())
+  checkInId     String   @unique
+  checkIn       CheckIn  @relation(fields: [checkInId], references: [id])
+  status        String
+  dailyMessage  String?
+  nudgePlan     String?
+  createdAt     DateTime @default(now())
+}

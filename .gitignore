@@ -1,0 +1,5 @@
+# System files
+.DS_Store
+
+# Local tooling config (not part of the submission)
+.claude/
