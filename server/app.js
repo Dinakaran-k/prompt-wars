@@ -19,23 +19,43 @@ app.use(helmet());
 // session ID (shared URL, referrer, etc.) read that session's data
 // cross-origin. Keep a real origin allowlist. Scoped to /api only (one
 // mount below, not per-route) so it can never touch static asset or page
-// requests — that was the actual cause of the earlier production outage,
+// requests — that was the actual cause of an earlier production outage,
 // not the existence of an allowlist.
-const corsOptions = {
-  origin: function (origin, callback) {
-    if (!origin) return callback(null, true); // same-origin / non-browser requests send no Origin header
-    if (process.env.CORS_ORIGIN && origin === process.env.CORS_ORIGIN) return callback(null, true);
-    if (process.env.NODE_ENV !== 'production' && origin.startsWith('http://localhost')) return callback(null, true);
+//
+// This is a single combined deploy (Express serves the built client itself),
+// so the only legitimate origin is whatever host this request actually
+// arrived on. Prefer an explicit CORS_ORIGIN env var if set, but don't
+// require it — falling back to the request's own Host header means the
+// app's own same-origin calls always work even if that env var was never
+// configured on the hosting platform, while a genuinely different origin
+// still gets rejected. NODE_ENV=production hardcodes https instead of
+// trusting req.protocol, since that reflects the connection to Render's
+// proxy, not the public https:// origin browsers actually send.
+function corsOptionsDelegate(req, callback) {
+  const origin = req.headers.origin;
+  const selfOrigin = `${process.env.NODE_ENV === 'production' ? 'https' : req.protocol}://${req.get('host')}`;
+  const allowedOrigin = process.env.CORS_ORIGIN || selfOrigin;
+
+  const isAllowed =
+    !origin || // same-origin / non-browser requests send no Origin header
+    origin === allowedOrigin ||
+    (process.env.NODE_ENV !== 'production' && origin.startsWith('http://localhost'));
+
+  if (!isAllowed) {
     return callback(new Error('Not allowed by CORS'));
-  },
-  credentials: false,
-  methods: ['GET', 'POST', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'X-Session-Id']
-};
+  }
+
+  callback(null, {
+    origin: true,
+    credentials: false,
+    methods: ['GET', 'POST', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'X-Session-Id']
+  });
+}
 
 app.use(express.json({ limit: '10kb' }));
 
-app.use('/api', cors(corsOptions));
+app.use('/api', cors(corsOptionsDelegate));
 app.use('/api/goal', requireSession, goalRouter);
 app.use('/api/checkins', requireSession, checkinsRouter);
 app.use('/api/stats', requireSession, statsRouter);
