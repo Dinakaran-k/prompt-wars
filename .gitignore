@@ -3,3 +3,8 @@
 
 # Local tooling config (not part of the submission)
 .claude/
+
+# Not part of the Main Challenge submission repo
+warm Up challenge/
+promptwars_context_memory.md
+promptwars_master_prompt.md
