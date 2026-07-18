@@ -13,35 +13,25 @@ const app = express();
 
 app.use(helmet());
 
+// CORS only matters for local dev, where the Vite client (localhost:5174)
+// and this server (localhost:5002) are different origins. In production
+// this is a single combined service — the client is served from this same
+// origin — so there's no cross-origin caller to restrict, and sessions are
+// identified by an X-Session-Id header (not a cookie), so there's no
+// CSRF/credential-leak risk from allowing any origin here. Scoped to /api
+// only so it never touches static asset or page requests.
 const corsOptions = {
-  origin: function (origin, callback) {
-    if (!origin) return callback(null, true);
-
-    const allowedOrigin = process.env.CORS_ORIGIN || 'http://localhost:5174';
-
-    if (process.env.NODE_ENV === 'production') {
-      if (origin === allowedOrigin) {
-        callback(null, true);
-      } else {
-        callback(new Error('Not allowed by CORS'));
-      }
-    } else if (origin.startsWith('http://localhost') || origin === allowedOrigin) {
-      callback(null, true);
-    } else {
-      callback(new Error('Not allowed by CORS'));
-    }
-  },
-  credentials: true,
+  origin: true,
+  credentials: false,
   methods: ['GET', 'POST', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'X-Session-Id']
 };
 
-app.use(cors(corsOptions));
 app.use(express.json({ limit: '10kb' }));
 
-app.use('/api/goal', requireSession, goalRouter);
-app.use('/api/checkins', requireSession, checkinsRouter);
-app.use('/api/stats', requireSession, statsRouter);
+app.use('/api/goal', cors(corsOptions), requireSession, goalRouter);
+app.use('/api/checkins', cors(corsOptions), requireSession, checkinsRouter);
+app.use('/api/stats', cors(corsOptions), requireSession, statsRouter);
 
 app.get('/health', (req, res) => {
   res.status(200).json({ status: 'OK', timestamp: new Date().toISOString() });
